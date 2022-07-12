@@ -1,8 +1,8 @@
 from functools import cache
 import time
-from datetime import datetime, date, timezone
+from datetime import datetime
 import itertools
-from typing import Optional, Mapping, Any, Dict, Set, List
+from typing import Optional, Mapping, Any, Dict, Sequence
 from functools import wraps
 
 from requests.exceptions import HTTPError
@@ -39,8 +39,11 @@ def get_timestamp(block: int) -> int:
 class CRVAdaptor:
     currency_crv_to_cg_id = {"eth": "ethereum", "btc": "bitcoin"}
 
-    def __init__(self, pool_data: Mapping[str, Mapping[str, Any]]):
-        self.pool_data = pool_data
+    def __init__(self, pool_data: Mapping[str, Mapping[str, Any]], pool_addrs: Optional[Sequence[str]]=None):
+        if not pool_addrs:
+            self.pool_data = pool_data
+        else:
+            self.pool_data = {pool_addr: pool_datum for pool_addr, pool_datum in pool_data.items() if pool_addr in pool_addrs}
         # add all addrs to coins
         pool_data_not_eth_btc_usd = (
             pool_datum

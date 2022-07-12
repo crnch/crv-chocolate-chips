@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
 import csv
 import re
 import time
@@ -51,7 +51,7 @@ def main(*pool_addrs: str):
     for registry_name, grouped_pool_data in groupby(sorted_pool_data_wo_impl, key=registry_grouper):
         implementation: Union[Contract, None] = None
         for i, pool_datum in enumerate(grouped_pool_data):
-            assert not pool_datum.get("implementationAddress", False), "should have no `implementationAddress"
+            assert not pool_datum.get("implementationAddress", False), "pool shouldn't have `implementationAddress"
             if i < 1:
                 implementation = get_contract(pool_datum["address"])
                 implementations[pool_datum["address"]] = implementation
@@ -114,7 +114,7 @@ def main(*pool_addrs: str):
 
     def get_min_crv_apr(pool_addr: str, block: int) -> float:
         crv_price = price.coin(crv_token.address, block)
-        inflation_rate = get_crv_token_rate() / 10**18
+        inflation_rate = get_crv_token_rate(block) / 10**18
         relative_weight = (
             gauge_controller.gauge_relative_weight(
                 gauges[pool_addr], block_identifier=block
@@ -137,23 +137,32 @@ def main(*pool_addrs: str):
             * 100
         )
 
-    max_datetime = None
-    csv_path = "crv-apr-history.csv"
-    if os.path.exists(csv_path):
+    csv_file = "crv-apr-history.csv"
+    csv_path = os.path.join(os.getcwd(), csv_file)
+    if (resume := os.path.exists(csv_path)):
         with open(csv_path) as fp:
             reader = csv.DictReader(fp)
-            max_datetime = max(datetime.fromisoformat(row["date"]) for row in reader)
+            already_done = list(reader)
+            resume_datetime = max(datetime.fromisoformat(row["date"]).replace(tzinfo=timezone.utc) for row in already_done)
+            logger.info(f"Data exists until {resume_datetime}. Resuming...") 
 
 
     with open(csv_path, "w") as fp:
         column_names = ["date"] + sorted(pool_data[addr]["symbol"] for addr in pools_with_gauges)
         writer = csv.DictWriter(fp, fieldnames=column_names)
         writer.writeheader()
-        block_start = min(pool_data[pool_addr]["block_deployed"] for pool_addr in pools_with_gauges)
-        if not max_datetime:
-            timestamp_start = chain[block_start].timestamp
+        min_pool_deployed_block: int = min(pool_data[pool_addr]["block_deployed"] for pool_addr in pools_with_gauges)
+        min_pool_deployed_timestamp = chain[min_pool_deployed_block].timestamp
+        block_start = min_pool_deployed_block
+        if not resume:
+            timestamp_start = min_pool_deployed_timestamp
         else:
-            timestamp_start = int(max_datetime.timestamp())
+            timestamp_start = int((resume_datetime + timedelta(days=1)).timestamp())
+            writer.writerows(already_done)
+            timestamp_block = min_pool_deployed_timestamp
+            while timestamp_block < timestamp_start:
+                block_start += int(0.95 * (timestamp_start - timestamp_block) / 15) or 1
+                timestamp_block = chain[block_start].timestamp
 
         price.fetch_history(timestamp_start)
         
