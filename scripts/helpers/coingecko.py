@@ -1,6 +1,6 @@
 from functools import cache
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 import itertools
 from typing import Optional, Mapping, Any, Dict, Sequence
 from functools import wraps
@@ -58,6 +58,9 @@ class CRVAdaptor:
             ) if coin["address"] != ZERO_ADDRESS
         }
 
+        # although there are ids of some token fetched, cg still fails in retrieving the history
+        # TODO: reimplement logic with factories for each token by trying to fetch something by id 
+        # if fails, set fallback that fetches by contract address
         self.coin_addr_to_cg_id: Dict[str, str] = {
             coin_addr: coingecko_token_id
             for coin_addr in self.coin_addr_to_symbol.keys()
@@ -81,8 +84,15 @@ class CRVAdaptor:
         response = cg.get_coin_market_chart_range_by_id(token_id, "usd", timestamp_start, timestamp_end)
         return response
     
-    def fetch_history(self, timestamp_start: int, timestamp_end: Optional[int]=None):
+    def fetch_history(self, timestamp_start_input: int, timestamp_end: Optional[int]=None, normalize=True):
         coingecko_ids = set(["bitcoin", "ethereum"]).union(self.coin_addr_to_cg_id.values())
+        if normalize:
+            replace_fields = {field: 0 for field in ("hour", "minute", "second", "microsecond")}
+            dt_start = datetime.utcfromtimestamp(timestamp_start_input).replace(tzinfo=timezone.utc, **replace_fields)
+            timestamp_start = int(dt_start.timestamp())
+        else:
+            timestamp_start = timestamp_start_input
+
         timestamp_end = timestamp_end or int(datetime.now().timestamp())
         logger.info(f"Fetching price history from coingecko from {datetime.utcfromtimestamp(timestamp_start).date()} to {datetime.utcfromtimestamp(timestamp_end).date()}")
         price_data = {}
@@ -95,11 +105,13 @@ class CRVAdaptor:
             logger.success(f"Successfully fetched price history for {token_id}")
             if response["prices"]:
                 timestamps, prices_usd = zip(*response["prices"])
-                price_data[token_id] = pd.Series(prices_usd, index=pd.to_datetime(timestamps, unit="ms"))
+                start_dt, end_dt = [pd.to_datetime(fnc(timestamps), unit="ms") for fnc in (min, max)]
+                rng = pd.date_range(start=start_dt, end=end_dt, freq="D", normalize=True)
+                price_data[token_id] = pd.Series(prices_usd, index=pd.to_datetime(timestamps, unit="ms")).reindex(index=rng, method="nearest")
             else:
                 continue
         logger.success("Finished fetching prices")
-        self.price_data = pd.DataFrame(price_data)
+        self.price_data = pd.DataFrame(price_data).reindex(index=rng, method="nearest")
 
 
     def calc_asset(self, pool: Contract, block:int) -> float:

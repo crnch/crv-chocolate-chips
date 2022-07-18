@@ -169,7 +169,7 @@ def main(*pool_addrs: str):
         datetime_start = datetime.utcfromtimestamp(timestamp_start)
         logger.info(f"Begin pulling data from block {block_start} ({datetime_start})")
         tick = time.time()
-        for block in yield_blocks_close_to_midnight(block_start):
+        for block in yield_midnight_blocks(block_start):
             current_datetime = datetime.utcfromtimestamp(chain[block].timestamp)
             current_date = current_datetime.date()
             data: Dict[str, Union[str, float]] = {"date": current_date.isoformat()}
@@ -281,7 +281,7 @@ def get_pool_addr(name):
     return pool["poolAddress"]
 
 
-def yield_blocks_close_to_midnight(start_block: int, end_block: Union[int, None]=None) -> Iterator[int]:
+def yield_midnight_blocks(start_block: int, end_block: Union[int, None]=None) -> Iterator[int]:
     start_timestamp = chain[start_block]["timestamp"]
     dt = datetime.utcfromtimestamp(start_timestamp).replace(
         hour=0, minute=0, second=0
@@ -303,7 +303,6 @@ def yield_blocks_close_to_midnight(start_block: int, end_block: Union[int, None]
             )
             current_block += int(blocks_until_midnight_estimate) or 1
             i += 1
-
 
 
 def get_coins(pool: Contract) -> List[str]:
